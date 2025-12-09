@@ -1,0 +1,71 @@
+name: 'Record Release'
+description: 'Record a deployment or release to Groo Ops Dashboard'
+author: 'groo.dev'
+
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  token:
+    description: 'Groo Ops API token'
+    required: true
+  environment:
+    description: 'Deployment environment (production, staging, development)'
+    required: true
+  version:
+    description: 'Explicit semantic version (e.g., 1.2.3). If not provided, uses bump.'
+    required: false
+  bump:
+    description: 'Version bump type (major, minor, patch). Default: patch'
+    required: false
+    default: 'patch'
+  commit-hash:
+    description: 'Git commit SHA. Default: github.sha'
+    required: false
+  commit-message:
+    description: 'Commit message. Default: from github event'
+    required: false
+  deployed-by:
+    description: 'Deployer identifier. Default: github-actions'
+    required: false
+    default: 'github-actions'
+  api-url:
+    description: 'Groo Ops API URL'
+    required: false
+    default: 'https://ops.groo.dev/v1'
+  dry-run:
+    description: 'Get next version without recording. Skips post run. Use for multi-job workflows.'
+    required: false
+    default: 'false'
+  get-version:
+    description: 'Get current deployed version without making changes.'
+    required: false
+    default: 'false'
+  skip-github-release:
+    description: 'Skip creating GitHub release.'
+    required: false
+    default: 'false'
+  release-prefix:
+    description: 'Prefix for GitHub release tag. Default: applicationName from Groo Ops.'
+    required: false
+  github-token:
+    description: 'GitHub token for creating releases.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: 'The recorded/current version'
+  id:
+    description: 'The deployment record ID'
+  deployed-at:
+    description: 'Deployment timestamp (get-version mode only)'
+  commit-hash:
+    description: 'Commit hash of deployment (get-version mode only)'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+  post: 'dist/post.js'
+  post-if: success()

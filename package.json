@@ -1,0 +1,30 @@
+{
+  "name": "record-release",
+  "version": "1.0.0",
+  "description": "GitHub Action to record deployments and releases",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "ncc build src/index.ts -o dist --minify && ncc build src/post.ts -o dist/post --minify && mv dist/post/index.js dist/post.js && rm -rf dist/post",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/groo-dev/record-release.git"
+  },
+  "keywords": [
+    "github-action",
+    "deployment",
+    "release",
+    "groo"
+  ],
+  "author": "groo.dev",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^2.0.0",
+    "@actions/github": "^6.0.1"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.4",
+    "typescript": "^5.9.3"
+  }
+}
