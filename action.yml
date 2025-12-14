@@ -53,6 +53,23 @@ inputs:
     description: 'GitHub token for creating releases.'
     required: false
     default: ${{ github.token }}
+  body:
+    description: 'Release notes content.'
+    required: false
+  body-file:
+    description: 'Path to file containing release notes.'
+    required: false
+  draft:
+    description: 'Create release as draft.'
+    required: false
+    default: 'false'
+  prerelease:
+    description: 'Mark release as prerelease.'
+    required: false
+    default: 'false'
+  artifacts:
+    description: 'Glob patterns for files to upload as release assets (one pattern per line). In multi-job workflows, artifacts from dry-run job are automatically transferred.'
+    required: false
 
 outputs:
   version:

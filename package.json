@@ -20,10 +20,13 @@
   "author": "groo.dev",
   "license": "MIT",
   "dependencies": {
+    "@actions/artifact": "^5.0.1",
     "@actions/core": "^2.0.0",
-    "@actions/github": "^6.0.1"
+    "@actions/github": "^6.0.1",
+    "glob": "^13.0.0"
   },
   "devDependencies": {
+    "@types/node": "^25.0.2",
     "@vercel/ncc": "^0.38.4",
     "typescript": "^5.9.3"
   }

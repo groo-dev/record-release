@@ -8,6 +8,9 @@ A GitHub Action to record deployments and releases to [Groo Ops Dashboard](https
 - Automatically create GitHub releases
 - Support for single-job and multi-job workflows
 - Semantic version bumping (major, minor, patch)
+- Upload release artifacts (with automatic transfer in multi-job workflows)
+- Custom release notes (inline or from file)
+- Draft and prerelease support
 
 ## Usage
 
@@ -143,6 +146,109 @@ By default, the GitHub release tag uses `{applicationName}-v{version}`. Override
 - run: echo "Current version is ${{ steps.current.outputs.version }}"
 ```
 
+### Release with Artifacts
+
+Upload files to the GitHub release:
+
+```yaml
+- name: Record release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: production
+    artifacts: |
+      dist/*.zip
+      dist/*.tar.gz
+```
+
+### Multi-Job with Artifacts
+
+Artifacts are automatically transferred between jobs - no need for `actions/upload-artifact` or `actions/download-artifact`:
+
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: release
+        uses: groo-dev/record-release@v1
+        with:
+          token: ${{ secrets.OPS_API_TOKEN }}
+          environment: production
+          dry-run: true
+          artifacts: dist/*.zip  # Specify pattern upfront
+
+      - name: Build
+        run: npm run build  # Creates dist/app.zip
+
+      # Post-run: Automatically uploads artifacts to storage
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        run: echo "Deploying..."
+
+      - name: Record release
+        uses: groo-dev/record-release@v1
+        with:
+          token: ${{ secrets.OPS_API_TOKEN }}
+          environment: production
+          version: ${{ needs.build.outputs.version }}
+          # Automatically downloads artifacts from build job
+```
+
+### Custom Release Notes
+
+Inline release notes:
+
+```yaml
+- name: Record release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: production
+    body: |
+      ## What's Changed
+      - New feature X
+      - Bug fix Y
+```
+
+Or from a file:
+
+```yaml
+- name: Record release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: production
+    body-file: CHANGELOG.md
+```
+
+### Draft and Prerelease
+
+```yaml
+- name: Record release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: staging
+    prerelease: true  # Mark as prerelease
+
+- name: Record release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: production
+    draft: true  # Create as draft for review
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -151,11 +257,16 @@ By default, the GitHub release tag uses `{applicationName}-v{version}`. Override
 | `environment` | Yes | - | `production`, `staging`, or `development` |
 | `version` | No | - | Explicit semver (e.g., `1.2.3`). Records immediately. |
 | `bump` | No | `patch` | Version bump type: `major`, `minor`, `patch` |
-| `dry-run` | No | `false` | Get next version without recording. Skips post-job. |
+| `dry-run` | No | `false` | Get next version without recording |
 | `get-version` | No | `false` | Get current deployed version |
 | `skip-github-release` | No | `false` | Skip creating GitHub release |
 | `release-prefix` | No | `applicationName` | Prefix for GitHub release tag |
 | `github-token` | No | `github.token` | GitHub token for creating releases |
+| `body` | No | - | Release notes content |
+| `body-file` | No | - | Path to file containing release notes |
+| `draft` | No | `false` | Create release as draft |
+| `prerelease` | No | `false` | Mark release as prerelease |
+| `artifacts` | No | - | Glob patterns for release assets (one per line) |
 | `commit-hash` | No | `github.sha` | Git commit SHA |
 | `commit-message` | No | from event | Commit message |
 | `deployed-by` | No | `github-actions` | Deployer identifier |

@@ -1,5 +1,9 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
+import * as fs from 'fs';
+import * as path from 'path';
+import { glob } from 'glob';
+import { DefaultArtifactClient } from '@actions/artifact';
 import {
   DeploymentResponse,
   DryRunResponse,
@@ -7,24 +11,115 @@ import {
   ErrorResponse,
 } from './types';
 
-async function createGithubRelease(
-  githubToken: string,
-  tag: string
-): Promise<void> {
+const ARTIFACT_NAME = 'record-release-artifacts';
+const ARTIFACT_DOWNLOAD_PATH = '/tmp/record-release-artifacts';
+
+async function downloadStoredArtifacts(): Promise<string[]> {
+  const artifact = new DefaultArtifactClient();
+
+  try {
+    // List artifacts to check if our artifact exists
+    const { artifacts } = await artifact.listArtifacts();
+    const ourArtifact = artifacts.find(a => a.name === ARTIFACT_NAME);
+
+    if (!ourArtifact) {
+      core.debug('No stored artifacts found');
+      return [];
+    }
+
+    core.info('Downloading stored artifacts from previous job...');
+
+    // Clean up any existing download directory
+    if (fs.existsSync(ARTIFACT_DOWNLOAD_PATH)) {
+      fs.rmSync(ARTIFACT_DOWNLOAD_PATH, { recursive: true });
+    }
+
+    const { downloadPath } = await artifact.downloadArtifact(ourArtifact.id, {
+      path: ARTIFACT_DOWNLOAD_PATH,
+    });
+
+    // Get all files in the download directory
+    const files = await glob(`${downloadPath}/**/*`, { nodir: true });
+    core.info(`Downloaded ${files.length} artifact(s)`);
+
+    return files;
+  } catch (error) {
+    if (error instanceof Error) {
+      core.debug(`Failed to download artifacts: ${error.message}`);
+    }
+    return [];
+  }
+}
+
+interface ReleaseOptions {
+  githubToken: string;
+  tag: string;
+  body?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  artifacts?: string;
+  artifactFiles?: string[];
+}
+
+async function createGithubRelease(options: ReleaseOptions): Promise<void> {
+  const { githubToken, tag, body, draft, prerelease, artifacts, artifactFiles } = options;
   const octokit = github.getOctokit(githubToken);
   const { owner, repo } = github.context.repo;
 
   core.info(`Creating GitHub release: ${tag}`);
 
   try {
-    await octokit.rest.repos.createRelease({
+    // Create the release
+    const release = await octokit.rest.repos.createRelease({
       owner,
       repo,
       tag_name: tag,
       name: tag,
-      generate_release_notes: true,
+      body: body || undefined,
+      draft: draft || false,
+      prerelease: prerelease || false,
+      generate_release_notes: !body, // Only auto-generate if no custom body
     });
-    core.info(`GitHub release created: https://github.com/${owner}/${repo}/releases/tag/${encodeURIComponent(tag)}`);
+
+    core.info(`GitHub release created: ${release.data.html_url}`);
+
+    // Collect all files to upload
+    const filesToUpload: string[] = [];
+
+    // Add files from glob patterns
+    if (artifacts) {
+      const patterns = artifacts.split('\n').map(p => p.trim()).filter(p => p);
+      for (const pattern of patterns) {
+        const files = await glob(pattern);
+        if (files.length === 0) {
+          core.warning(`No files matched pattern: ${pattern}`);
+        } else {
+          filesToUpload.push(...files);
+        }
+      }
+    }
+
+    // Add pre-resolved files (from artifact storage)
+    if (artifactFiles) {
+      filesToUpload.push(...artifactFiles);
+    }
+
+    // Upload all files
+    for (const file of filesToUpload) {
+      const fileName = path.basename(file);
+      const fileContent = fs.readFileSync(file);
+
+      core.info(`Uploading artifact: ${fileName}`);
+
+      await octokit.rest.repos.uploadReleaseAsset({
+        owner,
+        repo,
+        release_id: release.data.id,
+        name: fileName,
+        data: fileContent as unknown as string,
+      });
+    }
+
   } catch (error) {
     if (error instanceof Error) {
       core.warning(`Failed to create GitHub release: ${error.message}`);
@@ -69,6 +164,23 @@ async function run(): Promise<void> {
     const skipGithubRelease = core.getInput('skip-github-release') === 'true';
     const releasePrefix = core.getInput('release-prefix');
     const githubToken = core.getInput('github-token');
+
+    // GitHub release options
+    const body = core.getInput('body');
+    const bodyFile = core.getInput('body-file');
+    const draft = core.getInput('draft') === 'true';
+    const prerelease = core.getInput('prerelease') === 'true';
+    const artifacts = core.getInput('artifacts');
+
+    // Get release body from file if specified
+    let releaseBody = body;
+    if (!releaseBody && bodyFile) {
+      try {
+        releaseBody = fs.readFileSync(bodyFile, 'utf-8');
+      } catch (error) {
+        core.warning(`Failed to read body file: ${bodyFile}`);
+      }
+    }
 
     const commitHash = core.getInput('commit-hash') || github.context.sha;
     const commitMessage = core.getInput('commit-message') ||
@@ -118,7 +230,7 @@ async function run(): Promise<void> {
       }
     }
 
-    // Mode 2: Dry run - just get next version, skip post
+    // Mode 2: Dry run - just get next version
     if (dryRun) {
       core.info(`Getting next version for ${environment} (dry run)...`);
 
@@ -146,8 +258,15 @@ async function run(): Promise<void> {
       core.info(`Next version: ${result.version}`);
       core.setOutput('version', result.version);
 
-      // Signal post to skip
-      core.saveState('skip', 'true');
+      // If artifacts pattern specified, save for post-run upload
+      if (artifacts) {
+        core.info('Artifacts pattern specified - will upload in post-run');
+        core.saveState('skip', 'false');
+        core.saveState('mode', 'upload-artifacts');
+        core.saveState('artifacts', artifacts);
+      } else {
+        core.saveState('skip', 'true');
+      }
       return;
     }
 
@@ -202,7 +321,18 @@ async function run(): Promise<void> {
 
       // Create GitHub release
       if (!skipGithubRelease && githubToken) {
-        await createGithubRelease(githubToken, gitTag);
+        // Try to download artifacts from storage (from previous dry-run job)
+        const storedArtifacts = await downloadStoredArtifacts();
+
+        await createGithubRelease({
+          githubToken,
+          tag: gitTag,
+          body: releaseBody,
+          draft,
+          prerelease,
+          artifacts,
+          artifactFiles: storedArtifacts,
+        });
       }
 
       // Signal post to skip
@@ -250,6 +380,10 @@ async function run(): Promise<void> {
     core.saveState('skipGithubRelease', skipGithubRelease.toString());
     core.saveState('releasePrefix', releasePrefix);
     core.saveState('githubToken', githubToken);
+    core.saveState('body', releaseBody || '');
+    core.saveState('draft', draft.toString());
+    core.saveState('prerelease', prerelease.toString());
+    core.saveState('artifacts', artifacts);
 
   } catch (error) {
     if (error instanceof Error) {
