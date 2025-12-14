@@ -34,3 +34,18 @@ export interface ErrorResponse {
   error: string;
   code: string;
 }
+
+export interface SessionData {
+  environment: string;
+  version: string;
+  applicationName: string;
+  apiUrl: string;
+  releasePrefix?: string;
+  skipGithubRelease: boolean;
+  body?: string;
+  draft: boolean;
+  prerelease: boolean;
+  commitHash?: string;
+  commitMessage?: string;
+  deployedBy?: string;
+}

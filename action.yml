@@ -8,11 +8,11 @@ branding:
 
 inputs:
   token:
-    description: 'Groo Ops API token'
-    required: true
+    description: 'Groo Ops API token. Required for init and finalize modes. Not needed for upload-only mode.'
+    required: false
   environment:
-    description: 'Deployment environment (production, staging, development)'
-    required: true
+    description: 'Deployment environment (production, staging, development). Required for init mode, auto-loaded from session in finalize mode.'
+    required: false
   version:
     description: 'Explicit semantic version (e.g., 1.2.3). If not provided, uses bump.'
     required: false
@@ -35,7 +35,7 @@ inputs:
     required: false
     default: 'https://ops.groo.dev/v1'
   dry-run:
-    description: 'Get next version without recording. Skips post run. Use for multi-job workflows.'
+    description: 'Init mode for multi-job workflows. Gets next version and saves session for finalize job.'
     required: false
     default: 'false'
   get-version:
@@ -68,7 +68,7 @@ inputs:
     required: false
     default: 'false'
   artifacts:
-    description: 'Glob patterns for files to upload as release assets (one pattern per line). In multi-job workflows, artifacts from dry-run job are automatically transferred.'
+    description: 'Glob patterns for files to upload as release assets (one per line). In multi-job workflows, use this in build jobs to upload artifacts - they are automatically collected in finalize job.'
     required: false
 
 outputs:

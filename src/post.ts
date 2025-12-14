@@ -4,9 +4,30 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
 import { DefaultArtifactClient } from '@actions/artifact';
-import { DeploymentResponse, ErrorResponse } from './types';
+import { DeploymentResponse, ErrorResponse, SessionData } from './types';
 
-const ARTIFACT_NAME = 'record-release-artifacts';
+const SESSION_ARTIFACT_NAME = 'record-release-session';
+const ARTIFACTS_ARTIFACT_NAME = 'record-release-artifacts';
+const SESSION_FILE_PATH = '/tmp/record-release-session.json';
+
+async function uploadSession(sessionData: SessionData): Promise<void> {
+  const artifact = new DefaultArtifactClient();
+
+  // Write session to temp file
+  const sessionDir = path.dirname(SESSION_FILE_PATH);
+  if (!fs.existsSync(sessionDir)) {
+    fs.mkdirSync(sessionDir, { recursive: true });
+  }
+
+  const sessionFile = path.join(sessionDir, 'session.json');
+  fs.writeFileSync(sessionFile, JSON.stringify(sessionData, null, 2));
+
+  core.info('Uploading session artifact...');
+
+  await artifact.uploadArtifact(SESSION_ARTIFACT_NAME, [sessionFile], sessionDir);
+
+  core.info(`Session uploaded: version=${sessionData.version}, environment=${sessionData.environment}`);
+}
 
 async function uploadArtifactsToStorage(patterns: string): Promise<void> {
   const artifact = new DefaultArtifactClient();
@@ -30,10 +51,9 @@ async function uploadArtifactsToStorage(patterns: string): Promise<void> {
 
   core.info(`Uploading ${filesToUpload.length} artifact(s) to storage...`);
 
-  // Find common root directory for all files
   const rootDir = process.cwd();
 
-  await artifact.uploadArtifact(ARTIFACT_NAME, filesToUpload, rootDir);
+  await artifact.uploadArtifact(ARTIFACTS_ARTIFACT_NAME, filesToUpload, rootDir);
 
   core.info('Artifacts uploaded successfully');
   for (const file of filesToUpload) {
@@ -120,7 +140,23 @@ async function run(): Promise<void> {
     // Check mode
     const mode = core.getState('mode');
 
-    // Mode: Upload artifacts to storage (for dry-run with artifacts)
+    // Mode: Upload session (for dry-run/init in multi-job workflow)
+    if (mode === 'upload-session') {
+      const sessionJson = core.getState('session');
+      if (sessionJson) {
+        const sessionData = JSON.parse(sessionJson) as SessionData;
+        await uploadSession(sessionData);
+      }
+
+      // Also upload artifacts if specified
+      const artifacts = core.getState('artifacts');
+      if (artifacts) {
+        await uploadArtifactsToStorage(artifacts);
+      }
+      return;
+    }
+
+    // Mode: Upload artifacts only (for parallel build jobs)
     if (mode === 'upload-artifacts') {
       const artifacts = core.getState('artifacts');
       if (artifacts) {
@@ -129,7 +165,7 @@ async function run(): Promise<void> {
       return;
     }
 
-    // Mode: Record release and create GitHub release
+    // Mode: Record release and create GitHub release (single job)
     const token = core.getState('token');
     const apiUrl = core.getState('apiUrl');
     const environment = core.getState('environment');

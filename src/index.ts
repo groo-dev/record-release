@@ -9,36 +9,86 @@ import {
   DryRunResponse,
   VersionResponse,
   ErrorResponse,
+  SessionData,
 } from './types';
 
-const ARTIFACT_NAME = 'record-release-artifacts';
-const ARTIFACT_DOWNLOAD_PATH = '/tmp/record-release-artifacts';
+const SESSION_ARTIFACT_NAME = 'record-release-session';
+const ARTIFACTS_ARTIFACT_NAME = 'record-release-artifacts';
+const SESSION_DOWNLOAD_PATH = '/tmp/record-release-session';
+const ARTIFACTS_DOWNLOAD_PATH = '/tmp/record-release-artifacts';
+
+async function downloadSession(): Promise<SessionData | null> {
+  const artifact = new DefaultArtifactClient();
+
+  try {
+    const { artifacts } = await artifact.listArtifacts();
+    const sessionArtifact = artifacts.find(a => a.name === SESSION_ARTIFACT_NAME);
+
+    if (!sessionArtifact) {
+      core.debug('No session artifact found');
+      return null;
+    }
+
+    core.info('Downloading session from previous job...');
+
+    if (fs.existsSync(SESSION_DOWNLOAD_PATH)) {
+      fs.rmSync(SESSION_DOWNLOAD_PATH, { recursive: true });
+    }
+
+    const { downloadPath } = await artifact.downloadArtifact(sessionArtifact.id, {
+      path: SESSION_DOWNLOAD_PATH,
+    });
+
+    if (!downloadPath) {
+      core.warning('Failed to download session artifact');
+      return null;
+    }
+
+    const sessionFile = path.join(downloadPath, 'session.json');
+    if (!fs.existsSync(sessionFile)) {
+      core.warning('Session file not found in artifact');
+      return null;
+    }
+
+    const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf-8')) as SessionData;
+    core.info(`Session loaded: version=${sessionData.version}, environment=${sessionData.environment}`);
+
+    return sessionData;
+  } catch (error) {
+    if (error instanceof Error) {
+      core.warning(`Failed to download session: ${error.message}`);
+    }
+    return null;
+  }
+}
 
 async function downloadStoredArtifacts(): Promise<string[]> {
   const artifact = new DefaultArtifactClient();
 
   try {
-    // List artifacts to check if our artifact exists
     const { artifacts } = await artifact.listArtifacts();
-    const ourArtifact = artifacts.find(a => a.name === ARTIFACT_NAME);
+    const buildArtifact = artifacts.find(a => a.name === ARTIFACTS_ARTIFACT_NAME);
 
-    if (!ourArtifact) {
+    if (!buildArtifact) {
       core.debug('No stored artifacts found');
       return [];
     }
 
     core.info('Downloading stored artifacts from previous job...');
 
-    // Clean up any existing download directory
-    if (fs.existsSync(ARTIFACT_DOWNLOAD_PATH)) {
-      fs.rmSync(ARTIFACT_DOWNLOAD_PATH, { recursive: true });
+    if (fs.existsSync(ARTIFACTS_DOWNLOAD_PATH)) {
+      fs.rmSync(ARTIFACTS_DOWNLOAD_PATH, { recursive: true });
     }
 
-    const { downloadPath } = await artifact.downloadArtifact(ourArtifact.id, {
-      path: ARTIFACT_DOWNLOAD_PATH,
+    const { downloadPath } = await artifact.downloadArtifact(buildArtifact.id, {
+      path: ARTIFACTS_DOWNLOAD_PATH,
     });
 
-    // Get all files in the download directory
+    if (!downloadPath) {
+      core.debug('Failed to download artifacts');
+      return [];
+    }
+
     const files = await glob(`${downloadPath}/**/*`, { nodir: true });
     core.info(`Downloaded ${files.length} artifact(s)`);
 
@@ -153,9 +203,9 @@ async function recordRelease(
 
 async function run(): Promise<void> {
   try {
-    // Get inputs
-    const token = core.getInput('token', { required: true });
-    const environment = core.getInput('environment', { required: true });
+    // Get inputs (environment and token not required - depends on mode)
+    const token = core.getInput('token');
+    const environment = core.getInput('environment');
     const version = core.getInput('version');
     const bump = core.getInput('bump') || 'patch';
     const apiUrl = core.getInput('api-url');
@@ -186,6 +236,79 @@ async function run(): Promise<void> {
     const commitMessage = core.getInput('commit-message') ||
       github.context.payload.head_commit?.message || '';
     const deployedBy = core.getInput('deployed-by');
+
+    // Mode: Upload only (artifacts without token) - for parallel build jobs
+    if (!token && artifacts) {
+      core.info('Upload mode: Will upload artifacts in post-run');
+      core.saveState('skip', 'false');
+      core.saveState('mode', 'upload-artifacts');
+      core.saveState('artifacts', artifacts);
+      return;
+    }
+
+    // Token is required for all other modes
+    if (!token) {
+      throw new Error('token is required');
+    }
+
+    // Mode: Finalize (token without environment/version/dry-run/get-version)
+    if (!environment && !version && !dryRun && !getVersion) {
+      core.info('Finalize mode: Loading session from previous job...');
+
+      const session = await downloadSession();
+      if (!session) {
+        throw new Error('No session found. Run with environment and dry-run: true first.');
+      }
+
+      // Download artifacts from previous jobs
+      const storedArtifacts = await downloadStoredArtifacts();
+
+      // Construct git tag
+      const prefix = session.releasePrefix || session.applicationName;
+      const gitTag = `${prefix}-v${session.version}`;
+
+      // Record release
+      core.info(`Recording release ${session.version} to ${session.environment}...`);
+
+      const result = await recordRelease(session.apiUrl, token, {
+        environment: session.environment,
+        version: session.version,
+        commitHash: session.commitHash,
+        commitMessage: session.commitMessage,
+        deployedBy: session.deployedBy,
+        gitTag,
+      });
+
+      core.info(`Release recorded!`);
+      core.info(`  Application: ${result.deployment.applicationName}`);
+      core.info(`  Version: ${result.deployment.version}`);
+      core.info(`  Environment: ${result.deployment.environment}`);
+      core.info(`  Tag: ${gitTag}`);
+
+      core.setOutput('version', result.deployment.version);
+      core.setOutput('id', result.deployment.id);
+
+      // Create GitHub release
+      if (!session.skipGithubRelease && githubToken) {
+        await createGithubRelease({
+          githubToken,
+          tag: gitTag,
+          body: session.body,
+          draft: session.draft,
+          prerelease: session.prerelease,
+          artifactFiles: storedArtifacts,
+        });
+      }
+
+      // Signal post to skip
+      core.saveState('skip', 'true');
+      return;
+    }
+
+    // Environment is required for remaining modes
+    if (!environment) {
+      throw new Error('environment is required');
+    }
 
     // Validate environment
     const validEnvs = ['production', 'staging', 'development'];
@@ -230,7 +353,7 @@ async function run(): Promise<void> {
       }
     }
 
-    // Mode 2: Dry run - just get next version
+    // Mode 2: Dry run (Init) - get next version, save session for post
     if (dryRun) {
       core.info(`Getting next version for ${environment} (dry run)...`);
 
@@ -258,15 +381,28 @@ async function run(): Promise<void> {
       core.info(`Next version: ${result.version}`);
       core.setOutput('version', result.version);
 
-      // If artifacts pattern specified, save for post-run upload
-      if (artifacts) {
-        core.info('Artifacts pattern specified - will upload in post-run');
-        core.saveState('skip', 'false');
-        core.saveState('mode', 'upload-artifacts');
-        core.saveState('artifacts', artifacts);
-      } else {
-        core.saveState('skip', 'true');
-      }
+      // Save session data for post-run (will be uploaded as artifact)
+      const sessionData: SessionData = {
+        environment,
+        version: result.version,
+        applicationName: result.applicationName,
+        apiUrl,
+        releasePrefix: releasePrefix || undefined,
+        skipGithubRelease,
+        body: releaseBody || undefined,
+        draft,
+        prerelease,
+        commitHash,
+        commitMessage: commitMessage.split('\n')[0],
+        deployedBy,
+      };
+
+      core.saveState('skip', 'false');
+      core.saveState('mode', 'upload-session');
+      core.saveState('session', JSON.stringify(sessionData));
+      core.saveState('artifacts', artifacts || '');
+
+      core.info('Session will be uploaded in post-run for multi-job workflow');
       return;
     }
 
