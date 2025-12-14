@@ -6,9 +6,15 @@ import { glob } from 'glob';
 import { DefaultArtifactClient } from '@actions/artifact';
 import { DeploymentResponse, ErrorResponse, SessionData } from './types';
 
+import { randomUUID } from 'crypto';
+
 const SESSION_ARTIFACT_NAME = 'record-release-session';
-const ARTIFACTS_ARTIFACT_NAME = 'record-release-artifacts';
+const ARTIFACTS_ARTIFACT_PREFIX = 'record-release-artifacts-';
 const SESSION_FILE_PATH = '/tmp/record-release-session.json';
+
+function generateArtifactName(): string {
+  return `${ARTIFACTS_ARTIFACT_PREFIX}${randomUUID()}`;
+}
 
 async function uploadSession(sessionData: SessionData): Promise<void> {
   const artifact = new DefaultArtifactClient();
@@ -52,8 +58,10 @@ async function uploadArtifactsToStorage(patterns: string): Promise<void> {
   core.info(`Uploading ${filesToUpload.length} artifact(s) to storage...`);
 
   const rootDir = process.cwd();
+  const artifactName = generateArtifactName();
 
-  await artifact.uploadArtifact(ARTIFACTS_ARTIFACT_NAME, filesToUpload, rootDir);
+  await artifact.uploadArtifact(artifactName, filesToUpload, rootDir);
+  core.info(`Uploaded to artifact: ${artifactName}`);
 
   core.info('Artifacts uploaded successfully');
   for (const file of filesToUpload) {

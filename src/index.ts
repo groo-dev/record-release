@@ -13,7 +13,7 @@ import {
 } from './types';
 
 const SESSION_ARTIFACT_NAME = 'record-release-session';
-const ARTIFACTS_ARTIFACT_NAME = 'record-release-artifacts';
+const ARTIFACTS_ARTIFACT_PREFIX = 'record-release-artifacts-';
 const SESSION_DOWNLOAD_PATH = '/tmp/record-release-session';
 const ARTIFACTS_DOWNLOAD_PATH = '/tmp/record-release-artifacts';
 
@@ -67,32 +67,62 @@ async function downloadStoredArtifacts(): Promise<string[]> {
 
   try {
     const { artifacts } = await artifact.listArtifacts();
-    const buildArtifact = artifacts.find(a => a.name === ARTIFACTS_ARTIFACT_NAME);
+    const buildArtifacts = artifacts.filter(a => a.name.startsWith(ARTIFACTS_ARTIFACT_PREFIX));
 
-    if (!buildArtifact) {
+    if (buildArtifacts.length === 0) {
       core.debug('No stored artifacts found');
       return [];
     }
 
-    core.info('Downloading stored artifacts from previous job...');
+    // Sort by createdAt descending (newest first) to prefer newer files on re-runs
+    buildArtifacts.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    core.info(`Downloading ${buildArtifacts.length} artifact(s) from previous jobs...`);
 
     if (fs.existsSync(ARTIFACTS_DOWNLOAD_PATH)) {
       fs.rmSync(ARTIFACTS_DOWNLOAD_PATH, { recursive: true });
     }
 
-    const { downloadPath } = await artifact.downloadArtifact(buildArtifact.id, {
-      path: ARTIFACTS_DOWNLOAD_PATH,
-    });
+    const seenFiles = new Set<string>();
+    const allFiles: string[] = [];
 
-    if (!downloadPath) {
-      core.debug('Failed to download artifacts');
-      return [];
+    for (const buildArtifact of buildArtifacts) {
+      const downloadDir = path.join(ARTIFACTS_DOWNLOAD_PATH, buildArtifact.name);
+
+      const { downloadPath } = await artifact.downloadArtifact(buildArtifact.id, {
+        path: downloadDir,
+      });
+
+      if (!downloadPath) {
+        core.warning(`Failed to download artifact: ${buildArtifact.name}`);
+        continue;
+      }
+
+      const files = await glob(`${downloadPath}/**/*`, { nodir: true });
+
+      // Deduplicate by filename, keeping newest (processed first due to sort)
+      let addedCount = 0;
+      for (const file of files) {
+        const basename = path.basename(file);
+        if (!seenFiles.has(basename)) {
+          seenFiles.add(basename);
+          allFiles.push(file);
+          addedCount++;
+        } else {
+          core.debug(`Skipping duplicate: ${basename}`);
+        }
+      }
+
+      core.info(`  Downloaded ${addedCount} file(s) from ${buildArtifact.name}`);
     }
 
-    const files = await glob(`${downloadPath}/**/*`, { nodir: true });
-    core.info(`Downloaded ${files.length} artifact(s)`);
+    core.info(`Total: ${allFiles.length} unique artifact file(s)`);
 
-    return files;
+    return allFiles;
   } catch (error) {
     if (error instanceof Error) {
       core.debug(`Failed to download artifacts: ${error.message}`);
