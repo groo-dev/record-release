@@ -25,7 +25,7 @@ jobs:
 
       - name: Record release
         id: release
-        uses: groo-dev/record-release@v1
+        uses: groo-dev/record-release@main
         with:
           token: ${{ secrets.OPS_API_TOKEN }}
           environment: production
