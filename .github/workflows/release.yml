@@ -24,12 +24,14 @@ jobs:
       - run: npm run build
 
       - name: Record release
+        id: release
         uses: groo-dev/record-release@v1
         with:
           token: ${{ secrets.OPS_API_TOKEN }}
           environment: production
 
-      - name: Update v1 tag
+      - name: Update major version tag
         run: |
-          git tag -f v1
-          git push -f origin v1
+          MAJOR_VERSION=$(echo "${{ steps.release.outputs.version }}" | cut -d. -f1)
+          git tag -f "v${MAJOR_VERSION}"
+          git push -f origin "v${MAJOR_VERSION}"
