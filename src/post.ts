@@ -178,7 +178,6 @@ async function run(): Promise<void> {
     const apiUrl = core.getState('apiUrl');
     const environment = core.getState('environment');
     const version = core.getState('version');
-    const applicationName = core.getState('applicationName');
     const commitHash = core.getState('commitHash');
     const commitMessage = core.getState('commitMessage');
     const deployedBy = core.getState('deployedBy');
@@ -196,8 +195,9 @@ async function run(): Promise<void> {
     }
 
     // Construct git tag
-    const prefix = releasePrefix || applicationName;
-    const gitTag = `${prefix}-v${version}`;
+    const gitTag = releasePrefix
+      ? `${releasePrefix}-v${version}`
+      : `v${version}`;
 
     core.info(`Recording release ${version} to ${environment}...`);
 

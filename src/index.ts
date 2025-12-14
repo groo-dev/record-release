@@ -294,8 +294,9 @@ async function run(): Promise<void> {
       const storedArtifacts = await downloadStoredArtifacts();
 
       // Construct git tag
-      const prefix = session.releasePrefix || session.applicationName;
-      const gitTag = `${prefix}-v${session.version}`;
+      const gitTag = session.releasePrefix
+        ? `${session.releasePrefix}-v${session.version}`
+        : `v${session.version}`;
 
       // Record release
       core.info(`Recording release ${session.version} to ${session.environment}...`);
@@ -462,9 +463,9 @@ async function run(): Promise<void> {
       }
 
       const dryRunResult = dryRunData as DryRunResponse;
-      const applicationName = dryRunResult.applicationName;
-      const prefix = releasePrefix || applicationName;
-      const gitTag = `${prefix}-v${version}`;
+      const gitTag = releasePrefix
+        ? `${releasePrefix}-v${version}`
+        : `v${version}`;
 
       // Record release with gitTag
       const result = await recordRelease(apiUrl, token, {

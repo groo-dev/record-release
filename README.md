@@ -120,17 +120,25 @@ jobs:
     skip-github-release: true
 ```
 
-### Custom Release Prefix
+### Release Tag Format
 
-By default, the GitHub release tag uses `{applicationName}-v{version}`. Override with `release-prefix`:
+By default, the GitHub release tag is `v{version}`. For monorepos, use `release-prefix`:
 
 ```yaml
+# Single repo: tag = v1.0.0
 - name: Record release
   uses: groo-dev/record-release@v1
   with:
     token: ${{ secrets.OPS_API_TOKEN }}
     environment: production
-    release-prefix: "myapp"  # Tag: myapp-v1.0.0
+
+# Monorepo: tag = myapp-v1.0.0
+- name: Record release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: production
+    release-prefix: "myapp"
 ```
 
 ### Get Current Version
@@ -285,7 +293,7 @@ Or from a file:
 | `dry-run` | No | `false` | Init mode: get version and save session for finalize job |
 | `get-version` | No | `false` | Get current deployed version |
 | `skip-github-release` | No | `false` | Skip creating GitHub release |
-| `release-prefix` | No | `applicationName` | Prefix for GitHub release tag |
+| `release-prefix` | No | - | Prefix for tag. If set: `{prefix}-v{version}`. If not: `v{version}` |
 | `github-token` | No | `github.token` | GitHub token for creating releases |
 | `body` | No | - | Release notes content |
 | `body-file` | No | - | Path to file containing release notes |

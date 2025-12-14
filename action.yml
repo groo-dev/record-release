@@ -47,7 +47,7 @@ inputs:
     required: false
     default: 'false'
   release-prefix:
-    description: 'Prefix for GitHub release tag. Default: applicationName from Groo Ops.'
+    description: 'Prefix for GitHub release tag. If set, tag is {prefix}-v{version}. If not set, tag is v{version}.'
     required: false
   github-token:
     description: 'GitHub token for creating releases.'
