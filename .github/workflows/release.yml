@@ -28,3 +28,8 @@ jobs:
         with:
           token: ${{ secrets.OPS_API_TOKEN }}
           environment: production
+
+      - name: Update v1 tag
+        run: |
+          git tag -f v1
+          git push -f origin v1
