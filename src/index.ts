@@ -262,7 +262,7 @@ async function fetchConfig(
 function exposeConfig(config: ConfigResponse, secretKey?: string): void {
   // Expose variables (no decryption needed)
   for (const variable of config.variables) {
-    core.setOutput(variable.name, variable.value);
+    core.setOutput(`config.${variable.name}`, variable.value);
     core.info(`  Variable: ${variable.name}`);
   }
 
@@ -273,7 +273,7 @@ function exposeConfig(config: ConfigResponse, secretKey?: string): void {
       try {
         const value = decryptSecret(secret.value, secretKey);
         core.setSecret(value); // Mask in logs
-        core.setOutput(secret.name, value);
+        core.setOutput(`config.${secret.name}`, value);
         core.info(`  Secret: ${secret.name}`);
       } catch (error) {
         core.warning(`Failed to decrypt secret ${secret.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);

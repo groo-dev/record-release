@@ -298,11 +298,8 @@ Fetch environment-specific secrets and variables from Groo Ops. Secrets are end-
 
 - name: Use secrets and variables
   run: |
-    # Variables are exposed as var_NAME
-    echo "API URL: ${{ steps.release.outputs.var_API_URL }}"
-
-    # Secrets are exposed as secret_NAME (masked in logs)
-    npm publish --token ${{ steps.release.outputs.secret_NPM_TOKEN }}
+    echo "API URL: ${{ steps.release.outputs.config.API_URL }}"
+    npm publish --token ${{ steps.release.outputs.config.NPM_TOKEN }}
 ```
 
 **Setup:**
@@ -317,12 +314,63 @@ Fetch environment-specific secrets and variables from Groo Ops. Secrets are end-
 - Only workflows with the private key can decrypt secrets
 - Each environment has its own encryption key
 
+### Multi-Job with Secrets & Variables
+
+Config is stored (encrypted) in the session artifact and can be loaded by any job that needs it.
+
+```yaml
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Init: Fetch config, store in session, expose for this job
+      - name: Get version
+        id: release
+        uses: groo-dev/record-release@v1
+        with:
+          token: ${{ secrets.OPS_API_TOKEN }}
+          secret-key: ${{ secrets.OPS_SECRET_KEY }}
+          environment: production
+          dry-run: true
+
+      - name: Build
+        run: npm publish --token ${{ steps.release.outputs.config.NPM_TOKEN }}
+
+  test:
+    needs: init
+    runs-on: ubuntu-latest
+    steps:
+      # Config mode: Load from session, decrypt, expose
+      - name: Load config
+        id: config
+        uses: groo-dev/record-release@v1
+        with:
+          secret-key: ${{ secrets.OPS_SECRET_KEY }}
+
+      - name: Run tests
+        run: |
+          echo "Testing against ${{ steps.config.outputs.config.API_URL }}"
+
+  finalize:
+    needs: [init, test]
+    runs-on: ubuntu-latest
+    steps:
+      # Finalize: Just record release (no config needed)
+      - uses: groo-dev/record-release@v1
+        with:
+          token: ${{ secrets.OPS_API_TOKEN }}
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `token` | Mode-dependent | - | Groo Ops API token. Required for init/finalize, not for upload-only. |
-| `secret-key` | No | - | Private key for decrypting secrets. If provided, secrets are fetched and exposed as outputs. |
+| `token` | Mode-dependent | - | Groo Ops API token. Required for init/finalize, not for config-only or upload-only. |
+| `secret-key` | No | - | Private key for decrypting secrets. Can be used alone to load config from session in multi-job workflows. |
 | `environment` | Mode-dependent | - | `production`, `staging`, or `development`. Required for init, auto-loaded for finalize. |
 | `version` | No | - | Explicit semver (e.g., `1.2.3`). Records immediately. |
 | `bump` | No | `patch` | Version bump type: `major`, `minor`, `patch` |
@@ -349,8 +397,7 @@ Fetch environment-specific secrets and variables from Groo Ops. Secrets are end-
 | `id` | The deployment record ID |
 | `deployed-at` | Deployment timestamp (get-version mode only) |
 | `commit-hash` | Commit hash of deployment (get-version mode only) |
-| `var_*` | Variables from config (e.g., `var_API_URL`) |
-| `secret_*` | Decrypted secrets from config (e.g., `secret_NPM_TOKEN`). Only available if `secret-key` is provided. Values are masked in logs. |
+| `config.*` | Config values (e.g., `config.API_URL`, `config.NPM_TOKEN`). Secrets are masked in logs. Only available if `secret-key` is provided for decryption. |
 
 ## How It Works
 
@@ -361,7 +408,8 @@ The action automatically detects which mode to use based on inputs:
 | Inputs | Mode | Behavior |
 |--------|------|----------|
 | `token` + `environment` | **Single Job** | Get version → your build steps → post records + releases |
-| `token` + `environment` + `dry-run` | **Init** | Get version → post uploads session + artifacts |
+| `token` + `environment` + `dry-run` | **Init** | Get version, fetch config → post uploads session + artifacts |
+| `secret-key` only | **Config** | Load config from session, decrypt, expose as outputs |
 | `artifacts` only | **Upload** | Post uploads artifacts to storage |
 | `token` only | **Finalize** | Download session + artifacts → record + release |
 | `token` + `version` | **Explicit** | Record + release immediately |
