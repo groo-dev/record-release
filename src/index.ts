@@ -233,12 +233,11 @@ async function recordRelease(
   return data as DeploymentResponse;
 }
 
-async function fetchAndExposeConfig(
+async function fetchConfig(
   apiUrl: string,
   token: string,
-  environment: string,
-  secretKey?: string
-): Promise<void> {
+  environment: string
+): Promise<ConfigResponse | null> {
   try {
     const response = await fetch(`${apiUrl}/webhook/config?environment=${environment}`, {
       method: 'GET',
@@ -250,35 +249,38 @@ async function fetchAndExposeConfig(
     if (!response.ok) {
       const data = await response.json() as ErrorResponse;
       core.warning(`Failed to fetch config: ${data.error}`);
-      return;
+      return null;
     }
 
-    const config = await response.json() as ConfigResponse;
-
-    // Expose variables (no decryption needed)
-    for (const variable of config.variables) {
-      core.setOutput(`var_${variable.name}`, variable.value);
-      core.info(`  Variable: ${variable.name}`);
-    }
-
-    // Decrypt and expose secrets (if secret-key provided)
-    if (secretKey && config.secrets.length > 0) {
-      core.info(`Decrypting ${config.secrets.length} secret(s)...`);
-      for (const secret of config.secrets) {
-        try {
-          const value = decryptSecret(secret.value, secretKey);
-          core.setSecret(value); // Mask in logs
-          core.setOutput(`secret_${secret.name}`, value);
-          core.info(`  Secret: ${secret.name}`);
-        } catch (error) {
-          core.warning(`Failed to decrypt secret ${secret.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      }
-    } else if (config.secrets.length > 0 && !secretKey) {
-      core.warning(`${config.secrets.length} secret(s) found but no secret-key provided. Secrets will not be available.`);
-    }
+    return await response.json() as ConfigResponse;
   } catch (error) {
     core.warning(`Failed to fetch config: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return null;
+  }
+}
+
+function exposeConfig(config: ConfigResponse, secretKey?: string): void {
+  // Expose variables (no decryption needed)
+  for (const variable of config.variables) {
+    core.setOutput(variable.name, variable.value);
+    core.info(`  Variable: ${variable.name}`);
+  }
+
+  // Decrypt and expose secrets (if secret-key provided)
+  if (secretKey && config.secrets.length > 0) {
+    core.info(`Decrypting ${config.secrets.length} secret(s)...`);
+    for (const secret of config.secrets) {
+      try {
+        const value = decryptSecret(secret.value, secretKey);
+        core.setSecret(value); // Mask in logs
+        core.setOutput(secret.name, value);
+        core.info(`  Secret: ${secret.name}`);
+      } catch (error) {
+        core.warning(`Failed to decrypt secret ${secret.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  } else if (config.secrets.length > 0 && !secretKey) {
+    core.warning(`${config.secrets.length} secret(s) found but no secret-key provided. Secrets will not be available.`);
   }
 }
 
@@ -320,11 +322,40 @@ async function run(): Promise<void> {
     const deployedBy = core.getInput('deployed-by');
 
     // Mode: Upload only (artifacts without token) - for parallel build jobs
-    if (!token && artifacts) {
+    if (!token && artifacts && !secretKey) {
       core.info('Upload mode: Will upload artifacts in post-run');
       core.saveState('skip', 'false');
       core.saveState('mode', 'upload-artifacts');
       core.saveState('artifacts', artifacts);
+      return;
+    }
+
+    // Mode: Config only (secret-key without token) - load config from session
+    if (!token && secretKey) {
+      core.info('Config mode: Loading config from session...');
+
+      const session = await downloadSession();
+      if (!session) {
+        throw new Error('No session found. Run with token and dry-run: true first.');
+      }
+
+      if (!session.config) {
+        core.warning('No config found in session.');
+        core.saveState('skip', 'true');
+        return;
+      }
+
+      core.info('Exposing config from session...');
+      exposeConfig(session.config, secretKey);
+
+      // Also upload artifacts if specified
+      if (artifacts) {
+        core.saveState('skip', 'false');
+        core.saveState('mode', 'upload-artifacts');
+        core.saveState('artifacts', artifacts);
+      } else {
+        core.saveState('skip', 'true');
+      }
       return;
     }
 
@@ -370,10 +401,6 @@ async function run(): Promise<void> {
 
       core.setOutput('version', result.deployment.version);
       core.setOutput('id', result.deployment.id);
-
-      // Fetch and expose config
-      core.info('Fetching config...');
-      await fetchAndExposeConfig(session.apiUrl, token, session.environment, secretKey);
 
       // Create GitHub release
       if (!session.skipGithubRelease && githubToken) {
@@ -429,7 +456,10 @@ async function run(): Promise<void> {
 
       // Fetch and expose config
       core.info('Fetching config...');
-      await fetchAndExposeConfig(apiUrl, token, environment, secretKey);
+      const config = await fetchConfig(apiUrl, token, environment);
+      if (config) {
+        exposeConfig(config, secretKey);
+      }
 
       // Signal post to skip
       core.saveState('skip', 'true');
@@ -472,9 +502,14 @@ async function run(): Promise<void> {
       core.info(`Next version: ${result.version}`);
       core.setOutput('version', result.version);
 
-      // Fetch and expose config
+      // Fetch config
       core.info('Fetching config...');
-      await fetchAndExposeConfig(apiUrl, token, environment, secretKey);
+      const config = await fetchConfig(apiUrl, token, environment);
+
+      // Expose config (decrypt secrets if secret-key provided)
+      if (config) {
+        exposeConfig(config, secretKey);
+      }
 
       // Save session data for post-run (will be uploaded as artifact)
       const sessionData: SessionData = {
@@ -490,6 +525,7 @@ async function run(): Promise<void> {
         commitHash,
         commitMessage: commitMessage.split('\n')[0],
         deployedBy,
+        config: config || undefined,
       };
 
       core.saveState('skip', 'false');
@@ -552,7 +588,10 @@ async function run(): Promise<void> {
 
       // Fetch and expose config
       core.info('Fetching config...');
-      await fetchAndExposeConfig(apiUrl, token, environment, secretKey);
+      const config = await fetchConfig(apiUrl, token, environment);
+      if (config) {
+        exposeConfig(config, secretKey);
+      }
 
       // Create GitHub release
       if (!skipGithubRelease && githubToken) {
@@ -604,7 +643,10 @@ async function run(): Promise<void> {
 
     // Fetch and expose config
     core.info('Fetching config...');
-    await fetchAndExposeConfig(apiUrl, token, environment, secretKey);
+    const config = await fetchConfig(apiUrl, token, environment);
+    if (config) {
+      exposeConfig(config, secretKey);
+    }
 
     // Save state for post
     core.saveState('skip', 'false');

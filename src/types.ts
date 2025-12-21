@@ -48,6 +48,7 @@ export interface SessionData {
   commitHash?: string;
   commitMessage?: string;
   deployedBy?: string;
+  config?: ConfigResponse;
 }
 
 export interface ConfigResponse {
