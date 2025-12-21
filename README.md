@@ -11,6 +11,7 @@ A GitHub Action to record deployments and releases to [Groo Ops Dashboard](https
 - Upload release artifacts (with automatic transfer in multi-job workflows)
 - Custom release notes (inline or from file)
 - Draft and prerelease support
+- **Secrets & Variables**: Fetch and decrypt environment config at deploy time
 
 ## Usage
 
@@ -282,11 +283,46 @@ Or from a file:
     draft: true  # Create as draft for review
 ```
 
+### Secrets & Variables
+
+Fetch environment-specific secrets and variables from Groo Ops. Secrets are end-to-end encrypted and decrypted only in your workflow.
+
+```yaml
+- name: Record release
+  id: release
+  uses: groo-dev/record-release@v1
+  with:
+    token: ${{ secrets.OPS_API_TOKEN }}
+    environment: production
+    secret-key: ${{ secrets.OPS_SECRET_KEY_PRODUCTION }}
+
+- name: Use secrets and variables
+  run: |
+    # Variables are exposed as var_NAME
+    echo "API URL: ${{ steps.release.outputs.var_API_URL }}"
+
+    # Secrets are exposed as secret_NAME (masked in logs)
+    npm publish --token ${{ steps.release.outputs.secret_NPM_TOKEN }}
+```
+
+**Setup:**
+1. In Groo Ops Dashboard, go to your app's **Config** section
+2. Select an environment and click **Enable Secrets**
+3. Copy the private key and add it as a GitHub secret (e.g., `OPS_SECRET_KEY_PRODUCTION`)
+4. Add your secrets and variables in the dashboard
+
+**Security:**
+- Secrets are encrypted in the browser before being stored
+- The server never sees plaintext secret values
+- Only workflows with the private key can decrypt secrets
+- Each environment has its own encryption key
+
 ## Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `token` | Mode-dependent | - | Groo Ops API token. Required for init/finalize, not for upload-only. |
+| `secret-key` | No | - | Private key for decrypting secrets. If provided, secrets are fetched and exposed as outputs. |
 | `environment` | Mode-dependent | - | `production`, `staging`, or `development`. Required for init, auto-loaded for finalize. |
 | `version` | No | - | Explicit semver (e.g., `1.2.3`). Records immediately. |
 | `bump` | No | `patch` | Version bump type: `major`, `minor`, `patch` |
@@ -313,6 +349,8 @@ Or from a file:
 | `id` | The deployment record ID |
 | `deployed-at` | Deployment timestamp (get-version mode only) |
 | `commit-hash` | Commit hash of deployment (get-version mode only) |
+| `var_*` | Variables from config (e.g., `var_API_URL`) |
+| `secret_*` | Decrypted secrets from config (e.g., `secret_NPM_TOKEN`). Only available if `secret-key` is provided. Values are masked in logs. |
 
 ## How It Works
 

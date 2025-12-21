@@ -10,6 +10,9 @@ inputs:
   token:
     description: 'Groo Ops API token. Required for init and finalize modes. Not needed for upload-only mode.'
     required: false
+  secret-key:
+    description: 'Private key for decrypting secrets. If provided, secrets will be fetched and exposed as outputs.'
+    required: false
   environment:
     description: 'Deployment environment (production, staging, development). Required for init mode, auto-loaded from session in finalize mode.'
     required: false

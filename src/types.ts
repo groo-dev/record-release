@@ -49,3 +49,8 @@ export interface SessionData {
   commitMessage?: string;
   deployedBy?: string;
 }
+
+export interface ConfigResponse {
+  secrets: Array<{ name: string; value: string }>;
+  variables: Array<{ name: string; value: string }>;
+}
